@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Payment Success</title>
+
+
+    
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-image: url('./images/multiimage.jpg');
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .card {
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            width: 320px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .icon {
+            font-size: 50px;
+            color: green;
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            color: green;
+            margin-bottom: 10px;
+        }
+
+        p {
+            margin: 6px 0;
+            color: #333;
+        }
+
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            background: #eae6ff;
+            border: 1px solid #b7f5c0;
+            border-radius: 6px;
+            color: green;
+            font-weight: bold;
+        }
+
+        .btn {
+            margin-top: 20px;
+            padding: 10px;
+            width: 100%;
+            border: none;
+            background: #00baf2;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background: #0095c8;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+
+        <div class="icon">✔</div>
+
+        <h2>Payment Successful</h2>
+
+        <p>Your payment has been processed successfully.</p>
+
+        <p>Order ID: #ORD123456</p>
+
+        <div class="status">
+            Your order is CONFIRMED 🎉
+        </div>
+
+        <button class="btn" onclick="goHome()">Back to Home</button>
+
+    </div>
+
+    <script>
+        function goHome() {
+            window.location.href = "index.html";
+        }
+    </script>
+
+</body>
+
+</html>
