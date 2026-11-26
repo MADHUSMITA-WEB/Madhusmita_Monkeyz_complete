@@ -1,0 +1,65 @@
+V Monkeyz_website
+
+V Backend
+
+> node_modules
+
+@ .env
+
+{} cart.json
+{} checkout.json
+JS db.js
+{} login.json
+JS logs.js
+{} orders.json
+{} package-lock.json
+{} package.json
+{} payment.json
+JS paymentserver.js
+JS router.js
+script.sql
+JS server.js
+{} signup.json
+{} store.json
+V frontend
+
+V monkeyz-website
+: logo.jpeg
+> node_modules
+
+
+
+V Backend
+{} store.json
+v frontend
+
+V monkeyz-website
+logo.jpeg
+> node_modules
+V storeimages
+> uploads
+1.png
+2.png
+3.png
+4.png
+: 5.png
+6.png
+T 7.png
+T 8.png
+9.png
+: 10.png
+<> cart.html
+<> contact.html
+<> index.html
+
+<> login.html
+logo.jpeg
+maddy.jpeg
+JS main5.js
+{} package-lock.json
+{} package.json
+<> privacy policy.html
+<> refund nolicv.html
+> Outline
+
+Timeline
