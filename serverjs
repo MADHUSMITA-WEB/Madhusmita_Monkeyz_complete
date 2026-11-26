@@ -1,0 +1,898 @@
+// Load .env from the same folder as server.js (works no matter which folder
+// the server is started from – locally or on Hostinger).
+// On Hostinger, values set in hPanel → Environment variables are used too.
+require("dotenv").config({ path: require("path").join(__dirname, ".env") });
+
+const express = require("express");
+const mysql = require("mysql2/promise");
+const bcrypt = require("bcrypt");
+const cors = require("cors");
+const path = require("path");
+const crypto = require("crypto");
+const Razorpay = require("razorpay");
+const multer = require("multer");
+const fs = require("fs");
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+const PORT = process.env.PORT || 3000;
+
+// =========================
+// REQUEST LOGGER
+// Every API call is printed in the terminal, so you can see
+// whether the browser is actually reaching the server.
+// =========================
+
+app.use((req, res, next) => {
+    if (req.url.startsWith("/api")) {
+        const body = { ...req.body };
+        if (body.password) body.password = "***";
+        console.log(new Date().toLocaleTimeString(), req.method, req.url,
+            Object.keys(body).length ? JSON.stringify(body) : "");
+    }
+    next();
+});
+
+// =========================
+// MYSQL CONNECTION
+// =========================
+
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT || 3306,
+    waitForConnections: true,
+    connectionLimit: 10
+});
+
+// =========================
+// RAZORPAY
+// =========================
+
+const razorpay = (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET)
+    ? new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET
+    })
+    : null;
+
+// Startup check – prints only true/false, never the actual keys
+console.log("CONFIG CHECK ->",
+    "Razorpay ready:", !!razorpay,
+    "| RAZORPAY_KEY_ID set:", !!process.env.RAZORPAY_KEY_ID,
+    "| RAZORPAY_KEY_SECRET set:", !!process.env.RAZORPAY_KEY_SECRET,
+    "| DB_HOST set:", !!process.env.DB_HOST,
+    "| ADMIN_PASSWORD set:", !!process.env.ADMIN_PASSWORD);
+
+// =========================
+// HELPERS
+// =========================
+
+// Wraps async routes so a database error always sends a JSON
+// response with the real MySQL message (instead of hanging or sending {}).
+function route(label, handler) {
+    return async (req, res) => {
+        try {
+            await handler(req, res);
+        } catch (err) {
+            console.error(`[${label}]`, err.code || "", err.sqlMessage || err.message);
+            logActivity("ERROR", { details: `[${label}] ${err.sqlMessage || err.message}` });
+            if (!res.headersSent) {
+                res.status(500).json({
+                    success: false,
+                    message: err.sqlMessage || err.message || "Internal Server Error"
+                });
+            }
+        }
+    };
+}
+
+// Saves an event in the ActivityLog table, so the same messages shown
+// in the terminal can be read later in MySQL (also after hosting).
+// Never pass passwords or payment card details here.
+function logActivity(action, { userId = null, email = null, details = null } = {}) {
+    pool.execute(
+        "INSERT INTO ActivityLog (Action, UserId, Email, Details) VALUES (?, ?, ?, ?)",
+        [action, userId, email, details ? String(details).slice(0, 1000) : null]
+    ).catch(err => console.error("[ACTIVITY LOG]", err.sqlMessage || err.message));
+}
+
+function toUserId(value) {
+    const id = parseInt(value, 10);
+    // MySQL INT max; larger values (e.g. Date.now() ids) are ignored
+    return Number.isInteger(id) && id > 0 && id <= 2147483647 ? id : null;
+}
+
+function toQuantity(value) {
+    const q = parseInt(value, 10);
+    return Number.isInteger(q) && q > 0 ? q : 1;
+}
+
+function toPrice(value) {
+    const p = Number(value);
+    return Number.isFinite(p) && p >= 0 ? p : null;
+}
+
+async function columnExists(table, column) {
+    const [rows] = await pool.execute(
+        `SELECT 1 FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, column]
+    );
+    return rows.length > 0;
+}
+
+async function addColumnIfMissing(table, column, definition) {
+    if (!(await columnExists(table, column))) {
+        await pool.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        console.log(`Added column ${table}.${column}`);
+    }
+}
+
+// =========================
+// DATABASE SETUP
+// Creates missing tables and adds the UserId column to Cart,
+// so each user has their own cart.
+// =========================
+
+async function initDatabase() {
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS signup (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            email VARCHAR(150) NOT NULL UNIQUE,
+            password VARCHAR(255) NOT NULL
+        )
+    `);
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS login (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            email VARCHAR(150) NOT NULL
+        )
+    `);
+    await addColumnIfMissing("login", "UserId", "INT NULL");
+    await addColumnIfMissing("login", "Name", "VARCHAR(100) NULL");
+    await addColumnIfMissing("login", "LoginTime", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS Store (
+            StoreId INT AUTO_INCREMENT PRIMARY KEY,
+            ProductId INT NULL,
+            ProductName VARCHAR(200) NOT NULL,
+            Price DECIMAL(10,2) NOT NULL,
+            ImageUrl VARCHAR(500) NULL,
+            Quantity INT NOT NULL DEFAULT 0,
+            Size VARCHAR(20) NULL,
+            UserId INT NULL
+        )
+    `);
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS Cart (
+            CartId INT AUTO_INCREMENT PRIMARY KEY,
+            ProductName VARCHAR(200) NOT NULL,
+            Price DECIMAL(10,2) NOT NULL,
+            Quantity INT NOT NULL DEFAULT 1,
+            Size VARCHAR(20) NULL,
+            ImageUrl VARCHAR(500) NULL
+        )
+    `);
+    await addColumnIfMissing("Cart", "UserId", "INT NULL");
+    await addColumnIfMissing("Cart", "ProductId", "INT NULL");
+    await addColumnIfMissing("Cart", "ImageUrl", "VARCHAR(500) NULL");
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS Orders (
+            OrderId INT AUTO_INCREMENT PRIMARY KEY,
+            RazorpayOrderId VARCHAR(64) NOT NULL UNIQUE,
+            PaymentId VARCHAR(64) NULL,
+            UserId INT NULL,
+            Amount DECIMAL(10,2) NOT NULL,
+            Currency VARCHAR(5) NOT NULL DEFAULT 'INR',
+            Status VARCHAR(20) NOT NULL DEFAULT 'created',
+            Items JSON NULL,
+            CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PaidAt TIMESTAMP NULL
+        )
+    `);
+
+    await pool.execute(`
+        CREATE TABLE IF NOT EXISTS ActivityLog (
+            LogId INT AUTO_INCREMENT PRIMARY KEY,
+            Action VARCHAR(30) NOT NULL,
+            UserId INT NULL,
+            Email VARCHAR(150) NULL,
+            Details VARCHAR(1000) NULL,
+            CreatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    const [[db]] = await pool.execute("SELECT DATABASE() AS name");
+    console.log("Connected to database:", db.name);
+}
+
+// =========================
+// FRONTEND & STATIC ROUTING
+// =========================
+
+const frontendPath = path.join(__dirname, "../frontend");
+
+// Serve .html files without typing the extension (e.g. /payment -> payment.html)
+app.use(express.static(frontendPath, { extensions: ["html", "htm"] }));
+
+app.get("/", (req, res) => {
+    res.sendFile(path.join(frontendPath, "login.html"));
+});
+
+// =========================
+// ADMIN LOGIN
+// Password comes from ADMIN_PASSWORD in .env.
+// After login the browser gets a signed token (valid 12 hours)
+// that every admin route checks.
+// =========================
+
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "";
+const ADMIN_SECRET = process.env.ADMIN_SECRET || crypto.randomBytes(32).toString("hex");
+const ADMIN_TOKEN_HOURS = 12;
+
+if (ADMIN_PASSWORD.length < 8) {
+    console.warn("⚠️  ADMIN_PASSWORD missing or shorter than 8 characters in .env – admin login is disabled");
+}
+
+function signAdmin(value) {
+    return crypto.createHmac("sha256", ADMIN_SECRET).update(String(value)).digest("hex");
+}
+
+function safeEqual(a, b) {
+    const x = Buffer.from(String(a));
+    const y = Buffer.from(String(b));
+    return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+function makeAdminToken() {
+    const expires = Date.now() + ADMIN_TOKEN_HOURS * 60 * 60 * 1000;
+    return expires + "." + signAdmin(expires);
+}
+
+function isValidAdminToken(token) {
+    const [expires, sig] = String(token || "").split(".");
+    if (!expires || !sig || Number(expires) < Date.now()) return false;
+    return safeEqual(signAdmin(expires), sig);
+}
+
+function requireAdmin(req, res, next) {
+    const auth = req.headers.authorization || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (!isValidAdminToken(token)) {
+        return res.status(401).json({ success: false, message: "Admin login required" });
+    }
+    next();
+}
+
+// Simple brute-force protection: 5 wrong passwords -> blocked for 15 minutes
+const adminFailures = new Map();
+
+app.post("/api/admin/login", (req, res) => {
+    const ip = req.ip;
+    const rec = adminFailures.get(ip) || { count: 0, until: 0 };
+
+    if (rec.until > Date.now()) {
+        return res.status(429).json({ success: false, message: "Too many attempts. Try again in 15 minutes." });
+    }
+
+    if (ADMIN_PASSWORD.length < 8) {
+        return res.status(500).json({ success: false, message: "Admin password not set on server" });
+    }
+
+    if (!safeEqual(String(req.body.password || ""), ADMIN_PASSWORD)) {
+        rec.count += 1;
+        if (rec.count >= 5) { rec.until = Date.now() + 15 * 60 * 1000; rec.count = 0; }
+        adminFailures.set(ip, rec);
+        logActivity("ADMIN_LOGIN_FAILED", { details: "ip " + ip });
+        return res.status(401).json({ success: false, message: "Wrong admin password" });
+    }
+
+    adminFailures.delete(ip);
+    logActivity("ADMIN_LOGIN", { details: "ip " + ip });
+    res.json({ success: true, token: makeAdminToken() });
+});
+
+app.get("/api/admin/check", requireAdmin, (req, res) => {
+    res.json({ success: true });
+});
+
+// =========================
+// ADMIN – T-SHIRT IMAGE UPLOAD
+// Photos are saved in frontend/uploads and shown at /uploads/<file>
+// =========================
+
+const uploadDir = path.join(frontendPath, "uploads");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const IMAGE_TYPES = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (req, file, cb) => cb(null, uploadDir),
+        filename: (req, file, cb) =>
+            cb(null, "tee-" + Date.now() + "-" + crypto.randomBytes(4).toString("hex") + IMAGE_TYPES[file.mimetype])
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 },   // 5 MB
+    fileFilter: (req, file, cb) => {
+        if (IMAGE_TYPES[file.mimetype]) cb(null, true);
+        else cb(new Error("Only JPG, PNG or WEBP images are allowed"));
+    }
+});
+
+// Runs multer and turns its errors into a JSON message
+function uploadImage(req, res, next) {
+    upload.single("image")(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({
+                success: false,
+                message: err.code === "LIMIT_FILE_SIZE" ? "Image must be under 5 MB" : err.message
+            });
+        }
+        next();
+    });
+}
+
+function deleteUploadedImage(imageUrl) {
+    if (!imageUrl || !String(imageUrl).startsWith("/uploads/")) return;   // never touch the original 1.png–10.png
+    const file = path.join(uploadDir, path.basename(imageUrl));
+    fs.unlink(file, () => {});
+}
+
+function cleanSizes(value) {
+    const allowed = ["S", "M", "L", "XL", "XXL"];
+    const list = String(value || "").split(",").map(s => s.trim().toUpperCase()).filter(s => allowed.includes(s));
+    return list.length ? [...new Set(list)].join(",") : "M,L,XL,XXL";
+}
+
+// =========================
+// ADMIN – PRODUCTS (Store table)
+// =========================
+
+// Add a new T-shirt
+app.post("/api/admin/products", requireAdmin, uploadImage, route("ADMIN ADD", async (req, res) => {
+
+    const name = String(req.body.ProductName || "").trim();
+    const price = toPrice(req.body.Price);
+    const stock = Math.max(0, parseInt(req.body.Quantity, 10) || 0);
+
+    if (!name || price === null || price <= 0) {
+        if (req.file) deleteUploadedImage("/uploads/" + req.file.filename);
+        return res.status(400).json({ success: false, message: "Name and a valid price are required" });
+    }
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: "Please choose a T-shirt photo" });
+    }
+
+    const imageUrl = "/uploads/" + req.file.filename;
+
+    const [result] = await pool.execute(
+        `INSERT INTO Store (ProductName, Price, ImageUrl, Quantity, Size)
+         VALUES (?, ?, ?, ?, ?)`,
+        [name, price, imageUrl, stock, cleanSizes(req.body.Size)]
+    );
+    await pool.execute("UPDATE Store SET ProductId=? WHERE StoreId=?", [result.insertId, result.insertId]);
+
+    console.log("ADMIN ADDED T-SHIRT -> StoreId:", result.insertId, name);
+    logActivity("ADMIN_PRODUCT_ADD", { details: `StoreId ${result.insertId}: ${name}` });
+
+    res.json({ success: true, message: "T-shirt added", storeId: result.insertId, imageUrl });
+}));
+
+// Edit a T-shirt (photo is optional – keep the old one if none is sent)
+app.put("/api/admin/products/:id", requireAdmin, uploadImage, route("ADMIN EDIT", async (req, res) => {
+
+    const id = toUserId(req.params.id);
+    const [rows] = await pool.execute("SELECT * FROM Store WHERE StoreId=?", [id]);
+
+    if (!id || rows.length === 0) {
+        if (req.file) deleteUploadedImage("/uploads/" + req.file.filename);
+        return res.status(404).json({ success: false, message: "T-shirt not found" });
+    }
+
+    const old = rows[0];
+    const name = String(req.body.ProductName ?? old.ProductName).trim();
+    const price = toPrice(req.body.Price ?? old.Price);
+    const stock = Math.max(0, parseInt(req.body.Quantity ?? old.Quantity, 10) || 0);
+
+    if (!name || price === null || price <= 0) {
+        if (req.file) deleteUploadedImage("/uploads/" + req.file.filename);
+        return res.status(400).json({ success: false, message: "Name and a valid price are required" });
+    }
+
+    const imageUrl = req.file ? "/uploads/" + req.file.filename : old.ImageUrl;
+
+    await pool.execute(
+        "UPDATE Store SET ProductName=?, Price=?, Quantity=?, Size=?, ImageUrl=? WHERE StoreId=?",
+        [name, price, stock, cleanSizes(req.body.Size ?? old.Size), imageUrl, id]
+    );
+
+    if (req.file && old.ImageUrl !== imageUrl) deleteUploadedImage(old.ImageUrl);
+
+    logActivity("ADMIN_PRODUCT_EDIT", { details: `StoreId ${id}: ${name}` });
+    res.json({ success: true, message: "T-shirt updated", imageUrl });
+}));
+
+// Delete a T-shirt
+app.delete("/api/admin/products/:id", requireAdmin, route("ADMIN DELETE", async (req, res) => {
+
+    const id = toUserId(req.params.id);
+    const [rows] = await pool.execute("SELECT * FROM Store WHERE StoreId=?", [id]);
+
+    if (!id || rows.length === 0) {
+        return res.status(404).json({ success: false, message: "T-shirt not found" });
+    }
+
+    await pool.execute("DELETE FROM Store WHERE StoreId=?", [id]);
+    deleteUploadedImage(rows[0].ImageUrl);
+
+    logActivity("ADMIN_PRODUCT_DELETE", { details: `StoreId ${id}: ${rows[0].ProductName}` });
+    res.json({ success: true, message: "T-shirt deleted" });
+}));
+
+// =========================
+// SIGNUP
+// =========================
+
+app.post("/api/signup", route("SIGNUP", async (req, res) => {
+
+    const username = String(req.body.username || "").trim();
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = String(req.body.password || "");
+
+    if (!username || !email || !password) {
+        return res.status(400).json({ success: false, message: "Please fill in all fields" });
+    }
+
+    const [existing] = await pool.execute(
+        "SELECT id FROM signup WHERE email=? OR name=?",
+        [email, username]
+    );
+
+    if (existing.length > 0) {
+        return res.status(409).json({ success: false, message: "Username or email already exists" });
+    }
+
+    const hash = await bcrypt.hash(password, 10);
+
+    const [result] = await pool.execute(
+        "INSERT INTO signup (name, email, password) VALUES (?, ?, ?)",
+        [username, email, hash]
+    );
+
+    console.log("SIGNUP SAVED -> id:", result.insertId, "email:", email);
+    logActivity("SIGNUP", { userId: result.insertId, email });
+
+    res.json({ success: true, message: "Signup Successful" });
+}));
+
+// =========================
+// LOGIN
+// =========================
+
+app.post("/api/login", route("LOGIN", async (req, res) => {
+
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
+
+    if (!username || !password) {
+        return res.status(400).json({ success: false, message: "Enter username/email and password" });
+    }
+
+    const [rows] = await pool.execute(
+        "SELECT * FROM signup WHERE name=? OR email=?",
+        [username, username.toLowerCase()]
+    );
+
+    if (rows.length === 0) {
+        console.log("LOGIN FAILED - user not found:", username);
+        logActivity("LOGIN_FAILED", { details: "user not found: " + username });
+        return res.status(401).json({ success: false, message: "Invalid Login" });
+    }
+
+    const user = rows[0];
+
+    if (!(await bcrypt.compare(password, user.password))) {
+        console.log("LOGIN FAILED - wrong password:", user.email);
+        logActivity("LOGIN_FAILED", { userId: user.id, email: user.email, details: "wrong password" });
+        return res.status(401).json({ success: false, message: "Wrong Password" });
+    }
+
+    // Login history. If this fails the user can still log in,
+    // but the reason is printed in the terminal.
+    try {
+        await pool.execute(
+            "INSERT INTO login (email, UserId, Name) VALUES (?, ?, ?)",
+            [user.email, user.id, user.name]
+        );
+        console.log("LOGIN SAVED -> id:", user.id, "email:", user.email);
+        logActivity("LOGIN", { userId: user.id, email: user.email });
+    } catch (err) {
+        console.error("[LOGIN HISTORY]", err.sqlMessage || err.message);
+    }
+
+    res.json({
+        success: true,
+        message: "Login Successful",
+        user: { id: user.id, name: user.name, email: user.email }
+    });
+}));
+
+// =========================
+// STORE
+// =========================
+
+app.get("/api/store", route("STORE GET", async (req, res) => {
+    const [rows] = await pool.execute("SELECT * FROM Store ORDER BY StoreId DESC");
+    res.json(rows);
+}));
+
+app.post("/api/store", route("STORE SAVE", async (req, res) => {
+
+    const p = req.body;
+    const name = String(p.ProductName || "").trim();
+    const price = toPrice(p.Price);
+
+    if (!name || price === null) {
+        return res.status(400).json({ success: false, message: "ProductName and a valid Price are required" });
+    }
+
+    const [result] = await pool.execute(
+        `INSERT INTO Store (ProductId, ProductName, Price, ImageUrl, Quantity, Size, UserId)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+            toUserId(p.ProductId),
+            name,
+            price,
+            p.ImageUrl || null,
+            parseInt(p.Quantity, 10) || 0,
+            p.Size || null,
+            toUserId(p.UserId)
+        ]
+    );
+
+    console.log("PRODUCT SAVED -> StoreId:", result.insertId, name);
+    logActivity("PRODUCT", { userId: toUserId(p.UserId), details: `StoreId ${result.insertId}: ${name}` });
+
+    res.json({ success: true, message: "Product Saved", storeId: result.insertId });
+}));
+
+// =========================
+// CART (one cart per user)
+// =========================
+
+// GET /api/cart?userId=1
+app.get("/api/cart", route("CART GET", async (req, res) => {
+
+    const userId = toUserId(req.query.userId);
+    if (!userId) {
+        return res.status(400).json({ success: false, message: "userId is required" });
+    }
+
+    const [rows] = await pool.execute(
+        "SELECT * FROM Cart WHERE UserId=? ORDER BY CartId",
+        [userId]
+    );
+    res.json(rows);
+}));
+
+// PUT /api/cart  { UserId, items: [{ ProductId, ProductName, Price, Quantity, Size, ImageUrl }] }
+// Replaces the user's whole cart in one transaction.
+app.put("/api/cart", route("CART SYNC", async (req, res) => {
+
+    const userId = toUserId(req.body.UserId);
+    const items = Array.isArray(req.body.items) ? req.body.items : null;
+
+    if (!userId || !items) {
+        return res.status(400).json({ success: false, message: "UserId and items are required" });
+    }
+
+    const conn = await pool.getConnection();
+
+    try {
+        await conn.beginTransaction();
+
+        await conn.execute("DELETE FROM Cart WHERE UserId=?", [userId]);
+
+        for (const item of items) {
+
+            const name = String(item.ProductName || "").trim();
+            const price = toPrice(item.Price);
+
+            if (!name || price === null) {
+                throw new Error("Invalid cart item: " + JSON.stringify(item));
+            }
+
+            await conn.execute(
+                `INSERT INTO Cart (UserId, ProductId, ProductName, Price, Quantity, Size, ImageUrl)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    userId,
+                    toUserId(item.ProductId),
+                    name,
+                    price,
+                    toQuantity(item.Quantity),
+                    item.Size || "N/A",
+                    item.ImageUrl || ""
+                ]
+            );
+        }
+
+        await conn.commit();
+        console.log(`CART SAVED -> user ${userId}, ${items.length} item(s)`);
+        logActivity("CART", { userId, details: `${items.length} item(s)` });
+        res.json({ success: true, message: "Cart Saved", count: items.length });
+
+    } catch (err) {
+        await conn.rollback().catch(() => {});
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// POST /api/cart  { UserId, ProductName, Price, Quantity, Size, ImageUrl }  (adds one row)
+app.post("/api/cart", route("CART ADD", async (req, res) => {
+
+    const c = req.body;
+    const userId = toUserId(c.UserId);
+    const name = String(c.ProductName || "").trim();
+    const price = toPrice(c.Price);
+
+    if (!userId || !name || price === null) {
+        return res.status(400).json({ success: false, message: "UserId, ProductName and Price are required" });
+    }
+
+    await pool.execute(
+        `INSERT INTO Cart (UserId, ProductId, ProductName, Price, Quantity, Size, ImageUrl)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [userId, toUserId(c.ProductId), name, price, toQuantity(c.Quantity), c.Size || "N/A", c.ImageUrl || ""]
+    );
+
+    res.json({ success: true, message: "Cart Saved" });
+}));
+
+// DELETE /api/cart?userId=1
+app.delete("/api/cart", route("CART CLEAR", async (req, res) => {
+
+    const userId = toUserId(req.query.userId || req.body.UserId);
+    if (!userId) {
+        return res.status(400).json({ success: false, message: "userId is required" });
+    }
+
+    await pool.execute("DELETE FROM Cart WHERE UserId=?", [userId]);
+    res.json({ success: true, message: "Cart Cleared" });
+}));
+
+// =========================
+// CHECKOUT
+// =========================
+
+app.post("/api/checkout", route("CHECKOUT", async (req, res) => {
+
+    if (!razorpay) {
+        return res.status(500).json({ success: false, message: "Payment gateway not configured" });
+    }
+
+    const userId = toUserId(req.body.UserId);
+    if (!userId) {
+        return res.status(400).json({ success: false, message: "Please login first" });
+    }
+
+    const [items] = await pool.execute("SELECT * FROM Cart WHERE UserId=?", [userId]);
+
+    if (items.length === 0) {
+        return res.status(400).json({ success: false, message: "Cart is empty" });
+    }
+
+    const amountPaise = items.reduce(
+        (sum, i) => sum + Math.round(Number(i.Price) * 100) * Number(i.Quantity),
+        0
+    );
+
+    if (!Number.isFinite(amountPaise) || amountPaise < 100) {
+        return res.status(400).json({ success: false, message: "Invalid cart total" });
+    }
+
+    const rzpOrder = await razorpay.orders.create({
+        amount: amountPaise,
+        currency: "INR",
+        receipt: "monkeyz_" + Date.now()
+    });
+
+    await pool.execute(
+        `INSERT INTO Orders (RazorpayOrderId, UserId, Amount, Currency, Status, Items)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [rzpOrder.id, userId, amountPaise / 100, "INR", "created", JSON.stringify(items)]
+    );
+
+    console.log(`ORDER CREATED -> ${rzpOrder.id}, user ${userId}, ₹${amountPaise / 100}`);
+    logActivity("ORDER_CREATED", { userId, details: `${rzpOrder.id}, Rs ${amountPaise / 100}` });
+
+    res.json({
+        success: true,
+        key: process.env.RAZORPAY_KEY_ID,
+        orderId: rzpOrder.id,
+        amount: rzpOrder.amount,
+        currency: rzpOrder.currency
+    });
+}));
+
+// =========================
+// PAYMENT SUCCESS
+// =========================
+
+app.post("/api/payment/success", route("PAYMENT SUCCESS", async (req, res) => {
+
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        return res.status(400).json({ success: false, message: "Missing payment details" });
+    }
+
+    const expected = crypto
+        .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+        .update(razorpay_order_id + "|" + razorpay_payment_id)
+        .digest("hex");
+
+    const a = Buffer.from(expected);
+    const b = Buffer.from(String(razorpay_signature));
+
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        await pool.execute(
+            "UPDATE Orders SET Status='failed' WHERE RazorpayOrderId=? AND Status='created'",
+            [razorpay_order_id]
+        );
+        console.log("PAYMENT FAILED -> signature check failed:", razorpay_order_id);
+        logActivity("PAYMENT_FAILED", { details: `${razorpay_order_id}: signature check failed` });
+        return res.status(400).json({ success: false, message: "Payment verification failed" });
+    }
+
+    const conn = await pool.getConnection();
+
+    try {
+        await conn.beginTransaction();
+
+        const [rows] = await conn.execute(
+            "SELECT OrderId, UserId, Status FROM Orders WHERE RazorpayOrderId=? FOR UPDATE",
+            [razorpay_order_id]
+        );
+
+        if (rows.length === 0) {
+            await conn.rollback();
+            return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        const order = rows[0];
+
+        if (order.Status === "paid") {
+            await conn.commit();
+            return res.json({ success: true, message: "Payment already confirmed", orderId: order.OrderId });
+        }
+
+        await conn.execute(
+            "UPDATE Orders SET Status='paid', PaymentId=?, PaidAt=NOW() WHERE RazorpayOrderId=?",
+            [razorpay_payment_id, razorpay_order_id]
+        );
+
+        // Empty only this user's cart. The purchased items stay in Orders.Items.
+        if (order.UserId) {
+            await conn.execute("DELETE FROM Cart WHERE UserId=?", [order.UserId]);
+        }
+
+        await conn.commit();
+
+        console.log(`PAYMENT OK -> order ${order.OrderId}, payment ${razorpay_payment_id}`);
+        logActivity("PAYMENT_OK", { userId: order.UserId, details: `order ${order.OrderId}, payment ${razorpay_payment_id}` });
+
+        res.json({ success: true, message: "Payment Successful", orderId: order.OrderId });
+
+    } catch (err) {
+        await conn.rollback().catch(() => {});
+        throw err;
+    } finally {
+        conn.release();
+    }
+}));
+
+// =========================
+// PAYMENT FAILED
+// =========================
+
+app.post("/api/payment/failed", route("PAYMENT FAILED", async (req, res) => {
+
+    const { razorpay_order_id } = req.body;
+
+    if (razorpay_order_id) {
+        await pool.execute(
+            "UPDATE Orders SET Status='failed' WHERE RazorpayOrderId=? AND Status='created'",
+            [razorpay_order_id]
+        );
+    }
+
+    console.log("PAYMENT FAILED ->", razorpay_order_id || "no order id");
+    logActivity("PAYMENT_FAILED", { details: razorpay_order_id || "no order id" });
+
+    res.json({ success: false, message: "Payment Failed" });
+}));
+
+// =========================
+// ORDER DETAILS
+// =========================
+
+app.get("/api/orders/:orderId", route("ORDER GET", async (req, res) => {
+
+    const [rows] = await pool.execute(
+        `SELECT OrderId, RazorpayOrderId, PaymentId, UserId, Amount, Currency, Status, Items, CreatedAt, PaidAt
+         FROM Orders WHERE OrderId=? OR RazorpayOrderId=?`,
+        [req.params.orderId, req.params.orderId]
+    );
+
+    if (rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    res.json({ success: true, order: rows[0] });
+}));
+
+// =========================
+// DATABASE TEST & SERVER TEST
+// Open http://localhost:3000/api/db-test to see which database
+// the server writes to, and how many rows each table has.
+// =========================
+
+app.get("/api/db-test", route("DB TEST", async (req, res) => {
+
+    const [[db]] = await pool.execute("SELECT DATABASE() AS database_name");
+    const counts = {};
+
+    for (const table of ["signup", "login", "Store", "Cart", "Orders", "ActivityLog"]) {
+        try {
+            const [[row]] = await pool.execute(`SELECT COUNT(*) AS n FROM ${table}`);
+            counts[table] = row.n;
+        } catch (err) {
+            counts[table] = "ERROR: " + (err.sqlMessage || err.message);
+        }
+    }
+
+    res.json({ ...db, rows: counts });
+}));
+
+app.get("/api/test", (req, res) => {
+    res.json({ success: true, message: "Monkeyz Server Running" });
+});
+
+// =========================
+// 404 CATCH-ALL ROUTE (MUST BE LAST)
+// =========================
+
+app.use((req, res) => {
+    res.status(404).json({ success: false, message: "Endpoint or file not found" });
+});
+
+// =========================
+// START SERVER
+// =========================
+
+initDatabase()
+    .catch(err => console.error("Database setup failed:", err.sqlMessage || err.message))
+    .finally(() => {
+        app.listen(PORT, () => {
+            console.log("==================================");
+            console.log("MONKEYZ SERVER RUNNING");
+            console.log("http://localhost:" + PORT);
+            console.log("==================================");
+        });
+    });
