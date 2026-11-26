@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <script src="hide-console.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monkeyz - Login</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #7b5acd;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            border: 1px solid #c33;
+            padding: 30px;
+            width: 350px;
+            text-align: center;
+            box-shadow: 0 0 10px #ddd;
+            border-radius: 8px;
+            background: white;
+        }
+
+        h2 {
+            color: #a00;
+        }
+
+        input {
+            width: 90%;
+            padding: 10px;
+            margin: 12px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #a00;
+        }
+
+        button {
+            background-color: rgb(170, 159, 0);
+            border: none;
+            color: white;
+            padding: 12px 20px;
+            margin-top: 15px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: rgb(140, 130, 0);
+        }
+
+        .signup-link {
+            margin-top: 15px;
+            display: block;
+            color: #a00;
+            text-decoration: none;
+        }
+
+        .signup-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h2>Login</h2>
+
+        <!-- Changed id to "login-form" to match main5.js -->
+        <form id="login-form">
+
+            <!-- Registration ID Input Field -->
+            <input
+                type="text"
+                id="registerId"
+                placeholder="Registration ID"
+                required
+            >
+
+            <!-- Password Input Field -->
+            <input
+                type="password"
+                id="password"
+                placeholder="Password"
+                required
+            >
+
+            <button type="submit">
+                Login
+            </button>
+
+        </form>
+
+        <a class="signup-link" href="signup.html">
+            Don't have an account? Sign Up
+        </a>
+
+    </div>
+
+    <!-- Connect login page to main5.js -->
+    <script src="main5.js"></script>
+
+</body>
+
+</html>
