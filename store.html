@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <script src="hide-console.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>T-Shirt Store</title>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            min-height: 100vh;
+        }
+
+        /* HEADER */
+        .header {
+            background: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .logo { font-size: 28px; font-weight: bold; color: #667eea; }
+
+        .nav-right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+        #user-box { color: #333; font-size: 15px; }
+
+        #user-box a, #logout-btn {
+            color: #667eea;
+            font-weight: bold;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 15px;
+            text-decoration: none;
+        }
+
+        .cart-btn {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            text-decoration: none;
+            transition: background 0.3s;
+        }
+
+        .cart-btn:hover { background: #4a54c4; }
+
+        .cart-count {
+            background: #ff4757;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 7px;
+            margin-left: 5px;
+            font-size: 13px;
+        }
+
+        /* MAIN */
+        .main-container { max-width: 1200px; margin: auto; padding: 40px 20px; }
+
+        .hero-title { text-align: center; color: white; font-size: 42px; margin-bottom: 10px; }
+
+        .hero-subtitle { text-align: center; color: white; font-size: 18px; margin-bottom: 40px; }
+
+        /* PRODUCTS */
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 30px;
+        }
+
+        .product-card {
+            background: white;
+            padding: 18px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.2s;
+        }
+
+        .product-card:hover { transform: translateY(-4px); }
+
+        .img-wrap {
+            position: relative;
+            width: 100%;
+            height: 260px;
+            border-radius: 8px;
+            background: #f4f4f6;
+            overflow: hidden;
+        }
+
+        .img-wrap img {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: opacity 0.3s;
+        }
+
+        /* Back image shows on hover (only for products that have one) */
+        .img-wrap .img-back { opacity: 0; }
+        .img-wrap:hover .img-back { opacity: 1; }
+        .img-wrap.has-back:hover .img-front { opacity: 0; }
+        /* Tapped "View back" */
+        .img-wrap.flipped .img-back { opacity: 1; }
+        .img-wrap.flipped .img-front { opacity: 0; }
+        .img-wrap.flipped:hover .img-back { opacity: 1; }
+        .img-wrap.flipped:hover .img-front { opacity: 0; }
+
+        .flip-hint {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            font-size: 11px;
+            padding: 3px 7px;
+            border-radius: 10px;
+            border: none;
+            cursor: pointer;
+            z-index: 2;
+        }
+
+        .product-card h3 { margin-top: 14px; color: #333; font-size: 19px; }
+
+        .price { font-size: 24px; font-weight: bold; color: #667eea; margin: 10px 0 4px; }
+
+        .stock { color: #777; font-size: 14px; margin-bottom: 12px; }
+        .stock.out { color: #ff4757; font-weight: bold; }
+
+        .label { font-size: 13px; color: #555; text-align: left; margin-bottom: 6px; font-weight: bold; }
+
+        /* Size buttons */
+        .sizes { display: flex; gap: 8px; margin-bottom: 12px; }
+
+        .size-btn {
+            flex: 1;
+            padding: 9px 0;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #444;
+            transition: all 0.2s;
+        }
+
+        .size-btn:hover { border-color: #667eea; }
+
+        .size-btn.active { border-color: #667eea; background: #667eea; color: white; }
+
+        /* Quantity stepper */
+        .qty-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .stepper {
+            display: flex;
+            align-items: center;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .stepper button {
+            width: 38px;
+            height: 36px;
+            border: none;
+            background: #f4f4f6;
+            font-size: 20px;
+            cursor: pointer;
+            color: #333;
+        }
+
+        .stepper button:hover:not(:disabled) { background: #e3e5fb; }
+        .stepper button:disabled { color: #bbb; cursor: not-allowed; }
+
+        .stepper span { width: 42px; text-align: center; font-weight: bold; font-size: 16px; }
+
+        .line-total { font-size: 14px; color: #555; }
+        .line-total b { color: #333; }
+
+        .add-btn {
+            width: 100%;
+            margin-top: auto;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+
+        .add-btn:hover { background: #4a54c4; }
+        .add-btn:disabled { background: #aaa; cursor: not-allowed; }
+        .buy-btn { margin-top: 8px; background: #ff4757; }
+        .buy-btn:hover { background: #e03445; }
+
+        .in-cart { font-size: 13px; color: #2ed573; margin-top: 8px; min-height: 16px; font-weight: bold; }
+        .in-cart a { color: #667eea; }
+
+        .message { grid-column: 1 / -1; text-align: center; color: white; font-size: 18px; }
+
+        /* TOAST */
+        #status {
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%) translateY(100px);
+            background: #222;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: transform 0.3s;
+            z-index: 20;
+            max-width: 90%;
+            text-align: center;
+        }
+
+        #status.show { transform: translateX(-50%) translateY(0); }
+        #status a { color: #a4b0ff; font-weight: bold; margin-left: 8px; }
+
+        @media (max-width: 600px) {
+            .logo { font-size: 22px; }
+            .cart-btn { padding: 10px 14px; font-size: 14px; }
+            .hero-title { font-size: 32px; }
+            .img-wrap { height: 230px; }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header class="header">
+        <div class="nav-container">
+            <div class="logo">T-Shirt Store</div>
+            <div class="nav-right">
+                <span id="user-box"></span>
+                <a href="./cart.html" class="cart-btn">
+                    Go to Cart 🛒
+                    <span id="cartCount" class="cart-count">0</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <h1 class="hero-title">Our T-Shirts</h1>
+        <p class="hero-subtitle">Choose your favorite style and size</p>
+
+        <div id="product-grid" class="product-grid">
+            <p class="message">Loading products...</p>
+        </div>
+    </main>
+
+    <div id="status"></div>
+
+    <script>
+
+        const API_URL = "/api";
+
+        // Sizes offered for every shirt
+        const SIZES = ["M", "L", "XL", "XXL"];
+
+        // Shown if a photo is missing (built in, so it never shows a broken icon)
+        const PLACEHOLDER_IMAGE = "data:image/svg+xml;utf8," + encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="#f4f4f6"/>' +
+            '<path d="M70 50l-35 20 12 28 15-7v59h76V91l15 7 12-28-35-20c-5 10-15 16-27 16s-22-6-28-16z" fill="#cfd2e6"/>' +
+            '<text x="100" y="185" font-family="Arial" font-size="13" text-anchor="middle" fill="#999">Image not found</text></svg>');
+
+        // --------------------------------------------
+        // Built-in product list.
+        // Used when the Store table is empty or the API is down.
+        // The same rows are in seed_store.sql for the database.
+        // --------------------------------------------
+        const DEFAULT_PRODUCTS = [
+           { ProductId: 1, ProductName: "Paradise Wings Tee (Brown)",    Price: 799, Quantity: 20, ImageUrl: "/2.png", BackImageUrl: "/3.png" },
+            { ProductId: 2, ProductName: "Best Quality Tee (Grey)",       Price: 599, Quantity: 25, ImageUrl: "/4.png" },
+            { ProductId: 3, ProductName: "Tiger Face Tee (Black)",        Price: 699, Quantity: 20, ImageUrl: "/5.png" },
+            { ProductId: 4, ProductName: "Off The Grid Tee (Sky Blue)",   Price: 549, Quantity: 30, ImageUrl: "/6.png" },
+            { ProductId: 5, ProductName: "Rock Hand Tee (White)",         Price: 549, Quantity: 25, ImageUrl: "/7.png" },
+            { ProductId: 6, ProductName: "Rock Hand Tee (Orange)",        Price: 549, Quantity: 25, ImageUrl: "/8.png" },
+            { ProductId: 7, ProductName: "Let's Do This Tee (Red)",       Price: 599, Quantity: 20, ImageUrl: "/9.png" },
+            { ProductId: 8, ProductName: "Geo Wolf Oversized Tee (Teal)", Price: 899, Quantity: 15, ImageUrl: "/10.png" },
+            { ProductId: 9, ProductName: "Surf Rider Tee (Grey)",         Price: 649, Quantity: 20, ImageUrl: "/1.png" }
+        ];
+        
+
+        // Remove anything from the saved cart that is not one of our tees
+        // (e.g. "Monkeyz Hoodie" added earlier)
+        function cleanCart() {
+            const names = DEFAULT_PRODUCTS.map((d) => d.ProductName.toLowerCase());
+            const cart = getCart();
+            const tees = cart.filter((i) => names.includes((i.name || "").toLowerCase()));
+            if (tees.length !== cart.length) {
+                localStorage.setItem("cart", JSON.stringify(tees));
+                console.log("Removed", cart.length - tees.length, "non-tee item(s) from the cart.");
+            }
+        }
+
+        const grid = document.getElementById("product-grid");
+        const statusBox = document.getElementById("status");
+        let statusTimer = null;
+
+
+        // ============================================
+        // HELPERS
+        // ============================================
+
+        function getCurrentUser() {
+            try { return JSON.parse(localStorage.getItem("user")); }
+            catch (err) { return null; }
+        }
+
+        function getCart() {
+            try {
+                const cart = JSON.parse(localStorage.getItem("cart")) || [];
+                return Array.isArray(cart) ? cart : [];
+            } catch (err) {
+                return [];
+            }
+        }
+
+        function saveCartLocal(cart) {
+            localStorage.setItem("cart", JSON.stringify(cart));
+        }
+
+        const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
+
+        function formatRupees(amount) {
+            return inr.format(Number(amount || 0));
+        }
+
+        function showStatus(text, withCartLink) {
+            statusBox.textContent = text;
+            if (withCartLink) {
+                const link = document.createElement("a");
+                link.href = "cart.html";
+                link.textContent = "View cart →";
+                statusBox.appendChild(link);
+            }
+            statusBox.classList.add("show");
+            clearTimeout(statusTimer);
+            statusTimer = setTimeout(() => statusBox.classList.remove("show"), 3000);
+        }
+
+
+        // ============================================
+        // USER (name + logout)
+        // ============================================
+
+        function renderUser() {
+            const box = document.getElementById("user-box");
+            const user = getCurrentUser();
+
+            if (!user) {
+                box.innerHTML = '<a href="login.html">Login</a>';
+                return;
+            }
+
+            box.textContent = "Hi, " + (user.name || user.email) + " ";
+
+            const logoutBtn = document.createElement("button");
+            logoutBtn.id = "logout-btn";
+            logoutBtn.type = "button";
+            logoutBtn.textContent = "Logout";
+            logoutBtn.addEventListener("click", () => {
+                localStorage.removeItem("user");
+                localStorage.removeItem("cart");
+                window.location.href = "login.html";
+            });
+
+            box.appendChild(logoutBtn);
+        }
+
+
+        // ============================================
+        // LOAD PRODUCTS (Store table, else built-in list)
+        // ============================================
+
+        async function loadProducts() {
+
+            grid.innerHTML = '<p class="message">Loading products...</p>';
+
+            // The shop always shows OUR tees (with our photos).
+            // The Store table is only used to update price / stock / id
+            // for a tee with the same name. Other rows (hoodies, caps,
+            // test items like "Monkeyz ...") are ignored.
+            let dbRows = [];
+
+            try {
+                const response = await fetch(API_URL + "/store");
+                const data = await response.json().catch(() => null);
+                if (!response.ok) throw new Error((data && data.message) || "HTTP " + response.status);
+                dbRows = Array.isArray(data) ? data : [];
+            } catch (error) {
+                console.warn("Could not load the Store table – using built-in prices/stock:", error.message);
+            }
+
+            const products = DEFAULT_PRODUCTS.map((tee) => {
+                const row = dbRows.find((r) => (r.ProductName || "").trim().toLowerCase() === tee.ProductName.toLowerCase());
+                if (!row) return tee;
+                return {
+                    ...tee,
+                    ProductId: row.ProductId ?? row.StoreId ?? tee.ProductId,
+                    Price: row.Price ?? tee.Price,
+                    Quantity: row.Quantity ?? tee.Quantity
+                };
+            });
+
+            const skipped = dbRows.filter((r) => !products.some((p) => p.ProductName.toLowerCase() === (r.ProductName || "").trim().toLowerCase()));
+            if (skipped.length) console.log("Ignored Store rows (not in the tee list):", skipped.map((r) => r.ProductName));
+
+            grid.innerHTML = "";
+            products.forEach(renderProduct);
+        }
+
+
+        // ============================================
+        // RENDER ONE PRODUCT CARD
+        // ============================================
+
+        function renderProduct(p) {
+
+            const id = p.ProductId ?? p.StoreId;
+            const price = Number(p.Price) || 0;
+            const stockCount = Number(p.Quantity) || 0;
+
+            // Back image: from DB column or the built-in list
+            const local = DEFAULT_PRODUCTS.find((d) => d.ProductName === p.ProductName);
+            const frontImage = (local && local.ImageUrl) || p.ImageUrl || "";
+            const backImage = p.BackImageUrl || (local && local.BackImageUrl) || "";
+
+            let selectedSize = SIZES.includes(p.Size) ? p.Size : "M";
+            let qty = 1;
+
+            const card = document.createElement("div");
+            card.className = "product-card";
+
+            // ---- Image (front, plus back on hover if available)
+            const wrap = document.createElement("div");
+            wrap.className = "img-wrap" + (backImage ? " has-back" : "");
+
+            const front = makeImg(frontImage, p.ProductName, "img-front");
+            wrap.appendChild(front);
+
+            if (backImage) {
+                wrap.appendChild(makeImg(backImage, p.ProductName + " back", "img-back"));
+                const flipBtn = document.createElement("button");
+                flipBtn.type = "button";
+                flipBtn.className = "flip-hint";
+                flipBtn.textContent = "↻ View back";
+                flipBtn.addEventListener("click", () => {
+                    const flipped = wrap.classList.toggle("flipped");
+                    flipBtn.textContent = flipped ? "↻ View front" : "↻ View back";
+                });
+                wrap.appendChild(flipBtn);
+            }
+            card.appendChild(wrap);
+
+            // ---- Name
+            const title = document.createElement("h3");
+            title.textContent = p.ProductName;
+            card.appendChild(title);
+
+            // ---- Price
+            const priceEl = document.createElement("div");
+            priceEl.className = "price";
+            priceEl.textContent = formatRupees(price);
+            card.appendChild(priceEl);
+
+            // ---- Stock
+            const stock = document.createElement("div");
+            stock.className = "stock" + (stockCount > 0 ? "" : " out");
+            stock.textContent = stockCount > 0 ? stockCount + " in stock" : "Out of stock";
+            card.appendChild(stock);
+
+            // ---- Sizes
+            const sizeLabel = document.createElement("div");
+            sizeLabel.className = "label";
+            sizeLabel.textContent = "Size";
+            card.appendChild(sizeLabel);
+
+            const sizes = document.createElement("div");
+            sizes.className = "sizes";
+
+            SIZES.forEach((s) => {
+                const b = document.createElement("button");
+                b.type = "button";
+                b.className = "size-btn" + (s === selectedSize ? " active" : "");
+                b.textContent = s;
+                b.addEventListener("click", () => {
+                    selectedSize = s;
+                    sizes.querySelectorAll(".size-btn").forEach((x) => x.classList.toggle("active", x === b));
+                    refreshInCart();
+                });
+                sizes.appendChild(b);
+            });
+            card.appendChild(sizes);
+
+            // ---- Quantity stepper
+            const qtyLabel = document.createElement("div");
+            qtyLabel.className = "label";
+            qtyLabel.textContent = "Quantity";
+            card.appendChild(qtyLabel);
+
+            const qtyRow = document.createElement("div");
+            qtyRow.className = "qty-row";
+
+            const stepper = document.createElement("div");
+            stepper.className = "stepper";
+
+            const minus = document.createElement("button");
+            minus.type = "button";
+            minus.textContent = "−";
+
+            const qtyText = document.createElement("span");
+
+            const plus = document.createElement("button");
+            plus.type = "button";
+            plus.textContent = "+";
+
+            stepper.append(minus, qtyText, plus);
+
+            const lineTotal = document.createElement("div");
+            lineTotal.className = "line-total";
+
+            qtyRow.append(stepper, lineTotal);
+            card.appendChild(qtyRow);
+
+            function refreshQty() {
+                qtyText.textContent = qty;
+                minus.disabled = qty <= 1;
+                plus.disabled = stockCount > 0 && qty >= stockCount;
+                lineTotal.innerHTML = "Total: <b>" + formatRupees(price * qty) + "</b>";
+            }
+
+            minus.addEventListener("click", () => { if (qty > 1) { qty--; refreshQty(); } });
+            plus.addEventListener("click", () => { if (qty < stockCount) { qty++; refreshQty(); } });
+
+            // ---- Add to cart
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "add-btn";
+            button.textContent = "Add to Cart";
+            button.disabled = stockCount <= 0;
+            if (stockCount <= 0) { minus.disabled = plus.disabled = true; }
+
+            const inCart = document.createElement("div");
+            inCart.className = "in-cart";
+
+            function refreshInCart() {
+                const line = getCart().find((i) => i.id === id && i.size === selectedSize);
+                inCart.innerHTML = line
+                    ? "✓ " + line.quantity + " × " + selectedSize + " in your cart · <a href='cart.html'>View</a>"
+                    : "";
+            }
+
+            button.addEventListener("click", async () => {
+                await addToCart({
+                    id: id,
+                    name: p.ProductName,
+                    price: price,
+                    image: frontImage,
+                    size: selectedSize,
+                    stock: stockCount
+                }, qty);
+                qty = 1;
+                refreshQty();
+                refreshInCart();
+            });
+
+            const buyNow = document.createElement("button");
+            buyNow.type = "button";
+            buyNow.className = "add-btn buy-btn";
+            buyNow.textContent = "Buy Now →";
+            buyNow.disabled = stockCount <= 0;
+            buyNow.addEventListener("click", async () => {
+                await addToCart({
+                    id: id, name: p.ProductName, price: price,
+                    image: frontImage, size: selectedSize, stock: stockCount
+                }, qty);
+                window.location.href = "cart.html";
+            });
+
+            card.appendChild(button);
+            card.appendChild(buyNow);
+            card.appendChild(inCart);
+
+            refreshQty();
+            refreshInCart();
+            grid.appendChild(card);
+        }
+
+        function makeImg(src, alt, cls) {
+            const img = document.createElement("img");
+            img.className = cls;
+            img.src = src || PLACEHOLDER_IMAGE;
+            img.alt = alt;
+            img.loading = "lazy";
+            img.onerror = () => { img.onerror = null; img.src = PLACEHOLDER_IMAGE; };
+            return img;
+        }
+
+
+        // ============================================
+        // ADD PRODUCT TO CART
+        // ============================================
+
+        async function addToCart(product, qty) {
+
+            const cart = getCart();
+
+            // Same product + same size = same cart line
+            const existing = cart.find((i) => i.id === product.id && i.size === product.size);
+
+            if (existing) {
+                const wanted = Number(existing.quantity) + qty;
+                existing.quantity = product.stock > 0 ? Math.min(wanted, product.stock) : wanted;
+                existing.stock = product.stock;
+                showStatus(product.name + " (" + product.size + ") – quantity now " + existing.quantity + " 🛒", true);
+            } else {
+                cart.push({
+                    id: product.id,
+                    name: product.name,
+                    price: product.price,
+                    image: product.image,
+                    size: product.size,
+                    stock: product.stock,
+                    quantity: qty
+                });
+                showStatus(qty + " × " + product.name + " (" + product.size + ") added 🛒", true);
+            }
+
+            saveCartLocal(cart);
+            updateCartCount();
+
+            console.log("Cart updated:");
+            console.table(cart.map((i) => ({
+                Product: i.name, Size: i.size, Qty: i.quantity,
+                Price: formatRupees(i.price), Total: formatRupees(i.price * i.quantity)
+            })));
+
+            await sendCartToBackend(cart);
+        }
+
+
+        // ============================================
+        // CART COUNT
+        // ============================================
+
+        function updateCartCount() {
+            const count = getCart().reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+            document.getElementById("cartCount").textContent = count;
+        }
+
+
+        // ============================================
+        // SEND CART TO BACKEND (Cart table, per user)
+        // ============================================
+
+        async function sendCartToBackend(cart) {
+
+            const user = getCurrentUser();
+
+            if (!user || !user.id) {
+                console.log("Not logged in – cart kept in the browser only.");
+                return;
+            }
+
+            const payload = {
+                UserId: user.id,
+                items: cart.map((item) => ({
+                    ProductId: item.id,
+                    ProductName: item.name,
+                    Price: item.price,
+                    Quantity: item.quantity,
+                    Size: item.size || "N/A",
+                    ImageUrl: item.image || ""
+                }))
+            };
+
+            try {
+                console.log("Sending cart to backend:", payload);
+
+                const response = await fetch(API_URL + "/cart", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(result.message || "Server returned " + response.status);
+                }
+
+                console.log("Backend response:", result);
+
+            } catch (error) {
+                console.error("Backend error (cart still saved locally):", error);
+            }
+        }
+
+
+        // ============================================
+        // START
+        // ============================================
+
+        cleanCart();
+        renderUser();
+        updateCartCount();
+        loadProducts();
+
+    </script>
+
+</body>
+</html>
